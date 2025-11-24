@@ -70,7 +70,10 @@ match_step_name_to_path = {
 }
 
 def get_steps(ticker):
-    doc = reports_collection.find_one({"company": ticker})
+    doc = reports_collection.find_one(
+    {"company": ticker},
+    sort=[("created_at", DESCENDING)],
+)
     if not doc:
         return []
 
@@ -101,36 +104,80 @@ def get_output(ticker, step):
     steps = doc.get("steps", {})
     step = steps.get(step)
 
-    return step["output"]
+    return step.get("output", "No output found")
 
 
 st.set_page_config(page_title="Prompt editing tool!", layout="wide")
 st.title("Prompt editing tool!")
 
-left, middle, right = st.columns(3)
-prompt_middle = middle.container()
-prompt_right = right.container()
+tab1, tab2 = st.tabs(["View Current Prompt/ Outputs", "Edit prompts and generate new outputs"])
 
-with left:
-    st.write("### Choose the company!")
-    company = st.selectbox(
-        "Tickers:",
-        ['GEV', 'PLTR', 'COST', 'CVNA', 'CMG', 'AER', 'VST', 'ALAB', 'TMDX', 'OXY', 'AMD'],
-    )
 
-    steps = get_steps(company)
+with tab1:
+    left, middle, right = st.columns(3)
+    prompt_middle = middle.container()
+    prompt_right = right.container()
 
-    if not steps:
-        st.warning("No steps found for this company.")
-    else:
-        st.write("### Steps")
-        for step in steps:
-            if st.button(step):
-                input = get_prompt(step)
-                with prompt_middle:
-                    st.write(f"### Prompt for {step}")
-                    st.write(input)
-                output = get_output(company, step)
-                with prompt_right:
-                    st.write(f"### Output for `{step}`")
-                    st.write(output)
+    with left:
+        st.write("### Choose the company!")
+        company = st.selectbox(
+            "Tickers:",
+            ['GEV', 'PLTR', 'COST', 'CVNA', 'CMG', 'AER', 'VST', 'ALAB', 'TMDX', 'OXY', 'AMD'],
+        )
+
+        steps = get_steps(company)
+
+        if not steps:
+            st.warning("No steps found for this company.")
+        else:
+            st.write("### Steps")
+            for step in steps:
+                if st.button(step):
+                    input = get_prompt(step)
+                    with prompt_middle:
+                        st.write(f"### Prompt for {step}")
+                        st.write(input)
+                    output = get_output(company, step)
+                    with prompt_right:
+                        st.write(f"### Output for `{step}`")
+                        st.write(output)
+
+with tab2:
+    left, middle, right = st.columns(3)
+    prompt_middle = middle.container()
+    prompt_right = right.container()
+
+    with left:
+        st.write("### Choose the company! ")
+        company = st.selectbox(
+            "Tickerz:",
+            ['GEV', 'PLTR', 'COST', 'CVNA', 'CMG', 'AER', 'VST', 'ALAB', 'TMDX', 'OXY', 'AMD'],
+        )
+
+        steps = get_steps(company)
+
+        if not steps:
+            st.warning("No steps found for this company.")
+        else:
+            st.write("### Steps")
+            for step in steps:
+                if st.button(step, key=f"{step}"):
+                    input = get_prompt(step)
+                    with prompt_middle:
+                        st.write(f"### Current prompt for {step}")
+                        edited_prompt = st.text_area(
+                            "Edit prompt",
+                            value=input,
+                            height=800,
+                            key=f"prompt_{company}_{step}"
+                        )
+                        if st.button("Try prompt"):
+                            pass
+                        if st.button("Save prompt", key=f"save_prompt_{company}_{step}"):
+                            #update_prompt(company, step, edited_prompt)  
+                            st.success("Prompt saved")
+                    output = get_output(company, step)
+                    with prompt_right:
+                        st.write(f"### Output for `{step}`")
+                        st.write(output)
+
