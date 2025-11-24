@@ -1,2 +1,4 @@
 .env
 /research
+runCustomPrompt.py
+/__pycache__
