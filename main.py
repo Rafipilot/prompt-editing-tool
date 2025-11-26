@@ -58,6 +58,10 @@ match_step_name_to_path = {
     "report-comparison-summary": "report-comparison-summary.md",
 }
 
+if "connections_store" not in st.session_state: ## THDO this shod
+    st.session_state.connections_store = []
+
+
 def get_steps(ticker):
     doc = reports_collection.find_one(
     {"company": ticker},
@@ -69,8 +73,22 @@ def get_steps(ticker):
     steps = doc.get("steps", {})
     if not isinstance(steps, dict):
         return []
-
+    for step in steps:
+        connections = get_connections(ticker, step)
+        st.session_state.connections_store .append({"company":ticker, "step":step, "connections":connections})
     return list(steps.keys())
+
+def get_connections(ticker, step):
+    doc = reports_collection.find_one(
+        {"company": ticker},
+        sort=[("created_at", DESCENDING)],
+    )
+    if not doc:
+        return []
+    connections = doc.get("steps").get(step).get("parent_id")
+    if not connections:
+        return []
+    return connections
 
 def get_prompt(step, company: str):
     path = "research/" + match_step_name_to_path[step]
@@ -101,6 +119,55 @@ def get_output(ticker, step):
 
     return step.get("output", "No output found")
 
+@st.dialog("Settings", width="small")
+def settings_dialog(ticker: str, step: str):
+
+    if "connections_store" not in st.session_state:
+        st.session_state.connections_store = []
+
+    entry_index = None
+    for i, entry in enumerate(st.session_state.connections_store):
+        if entry.get("company") == ticker and entry.get("step") == step:
+            entry_index = i
+            break
+
+    if entry_index is None:
+        st.session_state.connections_store.append(
+            {
+                "company": ticker,
+                "step": step,
+                "connections": [],
+            }
+        )
+        entry_index = len(st.session_state.connections_store) - 1
+
+    connections = st.session_state.connections_store[entry_index]["connections"]
+
+    st.write("Current connections:", connections or "None")
+
+    new_connection = st.text_input(
+        "Add/remove connection:",
+        key=f"conn_input_{ticker}_{step}",
+    )
+
+    col_add, col_remove = st.columns(2)
+
+    with col_add:
+        if st.button("Add", key=f"add_{ticker}_{step}"):
+            if new_connection:
+                st.session_state.connections_store[entry_index]["connections"].append(
+                    new_connection
+                )
+                st.rerun()
+
+    with col_remove:
+        if st.button("Remove", key=f"remove_{ticker}_{step}"):
+            if new_connection:
+                if new_connection in st.session_state.connections_store[entry_index]["connections"]:
+                    st.session_state.connections_store[entry_index]["connections"].remove(new_connection)
+                    st.rerun()
+                else:
+                    st.warning("Cant remove connection since it is not connected!")
 
 st.set_page_config(page_title="Prompt editing tool!", layout="wide")
 
@@ -134,15 +201,20 @@ with tab1:
         else:
             st.write("### Steps")
             for step in steps:
-                if st.button(step, key=f"view_{step}"):
-                    input_text = get_prompt(step, company)
-                    with prompt_middle:
-                        st.write(f"### Prompt for {step}")
-                        st.write(input_text)
-                    output = get_output(company, step)
-                    with prompt_right:
-                        st.write(f"### Output for `{step}`")
-                        st.write(output)
+                left2, right2 = st.columns(2)
+                with left2:
+                    if st.button(step, key=f"view_{step}"):
+                        input_text = get_prompt(step, company)
+                        with prompt_middle:
+                            st.write(f"### Prompt for {step}")
+                            st.write(input_text)
+                        output = get_output(company, step)
+                        with prompt_right:
+                            st.write(f"### Output for `{step}`")
+                            st.write(output)
+                with right2:
+                    if st.button("Settings", key=f"nonedit_settings_{company}_{step}"):
+                        settings_dialog(company, step)
 with tab2:
     left, middle, right = st.columns(3)
     prompt_middle = middle.container()
@@ -168,9 +240,13 @@ with tab2:
         else:
             st.write("### Steps")
             for step in steps:
-                if st.button(step, key=f"edit_{company}_{step}"):
-                    st.session_state["edit_selected_step"] = step
-
+                left2, right2 = st.columns(2)
+                with left2:
+                    if st.button(step, key=f"edit_{company}_{step}"):
+                        st.session_state["edit_selected_step"] = step
+                with right2:
+                    if st.button("Settings", key=f"settings_{company}_{step}"):
+                        settings_dialog(company, step)
     selected_step = st.session_state.get("edit_selected_step")
 
     if selected_step:
@@ -190,11 +266,19 @@ with tab2:
                 with prompt_right:
                     with st.spinner("Generating output..."):
                         # use the latest value from the text_area
+                        connections = None
+
+                        for i, entry in enumerate(st.session_state.connections_store):
+                            if entry.get("company") == company and entry.get("step") == step:
+                                connections = entry["connections"]
+                                break
+                        print("Running with connections: ", connections)
+
                         output = run_custom_prompt(
                             company=company,
                             model="gpt-4-turbo",
                             prompt=edited_prompt,
-                            step_name=selected_step,  # optional, metadata
+                            dependency_template_ids = connections
                         )
                         st.write("### Edited Prompt response: ")
                         st.write(output)
