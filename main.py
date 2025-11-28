@@ -58,25 +58,71 @@ match_step_name_to_path = {
     "report-comparison-summary": "report-comparison-summary.md",
 }
 
-if "connections_store" not in st.session_state: ## THDO this shod
+# ---------- SESSION STATE INITIALISATION ----------
+
+if "connections_store" not in st.session_state:
     st.session_state.connections_store = []
+
+if "models" not in st.session_state:
+    st.session_state.models = []
+
+if "edit_selected_step" not in st.session_state:
+    st.session_state["edit_selected_step"] = None
+
+if "edit_selected_company" not in st.session_state:
+    st.session_state["edit_selected_company"] = None
+
+# company selection per tab
+if "company_view" not in st.session_state:
+    st.session_state["company_view"] = "GEV"
+
+if "company_edit" not in st.session_state:
+    st.session_state["company_edit"] = "GEV"
+
+# storage for last run results in edit tab
+if "last_results" not in st.session_state:
+    st.session_state["last_results"] = None
+
+if "last_time_main" not in st.session_state:
+    st.session_state["last_time_main"] = None
+
+if "last_time_dep" not in st.session_state:
+    st.session_state["last_time_dep"] = None
+
+if "last_num_runs" not in st.session_state:
+    st.session_state["last_num_runs"] = None
+
+if "last_company" not in st.session_state:
+    st.session_state["last_company"] = None
+
+if "last_step" not in st.session_state:
+    st.session_state["last_step"] = None
 
 
 def get_steps(ticker):
     doc = reports_collection.find_one(
-    {"company": ticker},
-    sort=[("created_at", DESCENDING)],
-)
+        {"company": ticker},
+        sort=[("created_at", DESCENDING)],
+    )
     if not doc:
         return []
 
     steps = doc.get("steps", {})
     if not isinstance(steps, dict):
         return []
+
     for step in steps:
         connections = get_connections(ticker, step)
-        st.session_state.connections_store .append({"company":ticker, "step":step, "connections":connections})
-    return list(steps.keys())
+        st.session_state.connections_store.append(
+            {"company": ticker, "step": step, "connections": connections}
+        )
+
+    steps = list(steps.keys())
+    if len(st.session_state.models) != len(steps):
+        print("New steps, loading new models")
+        st.session_state.models = ["gpt-5" for _ in steps]
+    return steps
+
 
 def get_connections(ticker, step):
     doc = reports_collection.find_one(
@@ -88,7 +134,11 @@ def get_connections(ticker, step):
     connections = doc.get("steps").get(step).get("parent_id")
     if not connections:
         return []
+
+    if isinstance(connections, str):
+        connections = [connections]
     return connections
+
 
 def get_prompt(step, company: str):
     path = "research/" + match_step_name_to_path[step]
@@ -108,9 +158,9 @@ def get_prompt(step, company: str):
 
 def get_output(ticker, step):
     doc = reports_collection.find_one(
-    {"company": ticker},
-    sort=[("created_at", DESCENDING)],
-)
+        {"company": ticker},
+        sort=[("created_at", DESCENDING)],
+    )
     if not doc:
         return "No document found for that company."
 
@@ -119,11 +169,9 @@ def get_output(ticker, step):
 
     return step.get("output", "No output found")
 
+
 @st.dialog("Settings", width="small")
 def settings_dialog(ticker: str, step: str):
-
-    if "connections_store" not in st.session_state:
-        st.session_state.connections_store = []
 
     entry_index = None
     for i, entry in enumerate(st.session_state.connections_store):
@@ -145,6 +193,19 @@ def settings_dialog(ticker: str, step: str):
 
     st.write("Current connections:", connections or "None")
 
+    current_model = st.session_state.models[entry_index]
+    model_options = ["gpt-5", "gpt-4", "gpt-4-turbo"]  # we can add way more
+
+    selected_model = st.selectbox(
+        "Current Model",
+        model_options,
+        index=model_options.index(current_model),
+        key=f"current_model_{ticker}_{step}",
+    )
+    if st.button("Change Model", key=f"change_model_{ticker}_{step}"):
+        st.session_state.models[entry_index] = selected_model
+        st.rerun()
+
     new_connection = st.text_input(
         "Add/remove connection:",
         key=f"conn_input_{ticker}_{step}",
@@ -163,25 +224,27 @@ def settings_dialog(ticker: str, step: str):
     with col_remove:
         if st.button("Remove", key=f"remove_{ticker}_{step}"):
             if new_connection:
-                if new_connection in st.session_state.connections_store[entry_index]["connections"]:
-                    st.session_state.connections_store[entry_index]["connections"].remove(new_connection)
+                if (
+                    new_connection
+                    in st.session_state.connections_store[entry_index]["connections"]
+                ):
+                    st.session_state.connections_store[entry_index][
+                        "connections"
+                    ].remove(new_connection)
                     st.rerun()
                 else:
                     st.warning("Cant remove connection since it is not connected!")
 
+
 st.set_page_config(page_title="Prompt editing tool!", layout="wide")
-
-
-if "edit_selected_step" not in st.session_state:
-    st.session_state["edit_selected_step"] = None
-if "edit_selected_company" not in st.session_state:
-    st.session_state["edit_selected_company"] = None
 
 st.title("Prompt editing tool!")
 
-tab1, tab2 = st.tabs(["View Current Prompt/ Outputs", "Edit prompts and generate new outputs"])
+tab1, tab2 = st.tabs(
+    ["View Current Prompt/ Outputs", "Edit prompts and generate new outputs"]
+)
 
-
+# ---------------- TAB 1 ----------------
 with tab1:
     left, middle, right = st.columns(3)
     prompt_middle = middle.container()
@@ -191,7 +254,8 @@ with tab1:
         st.write("### Choose the company!")
         company = st.selectbox(
             "Tickers:",
-            ['GEV', 'PLTR', 'COST', 'CVNA', 'CMG', 'AER', 'VST', 'ALAB', 'TMDX', 'OXY', 'AMD'],
+            ["GEV", "PLTR", "COST", "CVNA", "CMG", "AER", "VST", "ALAB", "TMDX", "OXY", "AMD"],
+            key="company_view",
         )
 
         steps = get_steps(company)
@@ -203,7 +267,7 @@ with tab1:
             for step in steps:
                 left2, right2 = st.columns(2)
                 with left2:
-                    if st.button(step, key=f"view_{step}"):
+                    if st.button(step, key=f"view_{company}_{step}"):
                         input_text = get_prompt(step, company)
                         with prompt_middle:
                             st.write(f"### Prompt for {step}")
@@ -213,8 +277,12 @@ with tab1:
                             st.write(f"### Output for `{step}`")
                             st.write(output)
                 with right2:
-                    if st.button("Settings", key=f"nonedit_settings_{company}_{step}"):
+                    if st.button(
+                        "Settings", key=f"nonedit_settings_{company}_{step}"
+                    ):
                         settings_dialog(company, step)
+
+# ---------------- TAB 2 ----------------
 with tab2:
     left, middle, right = st.columns(3)
     prompt_middle = middle.container()
@@ -224,7 +292,7 @@ with tab2:
         st.write("### Choose the company! ")
         company = st.selectbox(
             "Tickerz:",
-            ['GEV', 'PLTR', 'COST', 'CVNA', 'CMG', 'AER', 'VST', 'ALAB', 'TMDX', 'OXY', 'AMD'],
+            ["GEV", "PLTR", "COST", "CVNA", "CMG", "AER", "VST", "ALAB", "TMDX", "OXY", "AMD"],
             key="company_edit",
         )
 
@@ -242,11 +310,14 @@ with tab2:
             for step in steps:
                 left2, right2 = st.columns(2)
                 with left2:
-                    if st.button(step, key=f"edit_{company}_{step}"):
+                    if st.button(
+                        step, key=f"edit_{company}_{step}"
+                    ):
                         st.session_state["edit_selected_step"] = step
                 with right2:
                     if st.button("Settings", key=f"settings_{company}_{step}"):
                         settings_dialog(company, step)
+
     selected_step = st.session_state.get("edit_selected_step")
 
     if selected_step:
@@ -261,27 +332,73 @@ with tab2:
                 height=800,
                 key=f"prompt_{company}_{selected_step}",
             )
+            number_of_runs = st.slider(
+                "How many times to run this prompt?",
+                min_value=1,
+                max_value=15,
+                value=5,
+                key=f"num_runs_{company}_{selected_step}",
+            )
 
             if st.button("Try prompt", key=f"try_{company}_{selected_step}"):
                 with prompt_right:
                     with st.spinner("Generating output..."):
-                        # use the latest value from the text_area
                         connections = None
+                        model = "gpt-5"
 
-                        for i, entry in enumerate(st.session_state.connections_store):
-                            if entry.get("company") == company and entry.get("step") == step:
+                        for i, entry in enumerate(
+                            st.session_state.connections_store
+                        ):
+                            if (
+                                entry.get("company") == company
+                                and entry.get("step") == selected_step
+                            ):
+                                print("Company: ", company, " step: ", selected_step)
                                 connections = entry["connections"]
+                                model = st.session_state.models[i]
                                 break
-                        print("Running with connections: ", connections)
 
-                        output = run_custom_prompt(
+                        print("Running with connections: ", connections)
+                        results_array, time_main, time_dep = run_custom_prompt(
                             company=company,
-                            model="gpt-4-turbo",
+                            model=model,
                             prompt=edited_prompt,
-                            dependency_template_ids = connections
+                            dependency_template_ids=connections,
+                            number_times=number_of_runs,
                         )
-                        st.write("### Edited Prompt response: ")
-                        st.write(output)
+
+                        # store in session state so we can control display with a slider
+                        st.session_state["last_results"] = results_array
+                        st.session_state["last_time_main"] = time_main
+                        st.session_state["last_time_dep"] = time_dep
+                        st.session_state["last_num_runs"] = number_of_runs
+                        st.session_state["last_company"] = company
+                        st.session_state["last_step"] = selected_step
+
+            # display last results for this company/step if present
+            if (
+                st.session_state.get("last_results") is not None
+                and st.session_state.get("last_company") == company
+                and st.session_state.get("last_step") == selected_step
+            ):
+                with prompt_right:
+                    st.write("### Edited Prompt response: ")
+                    st.write(
+                        "Time for main: ",
+                        st.session_state["last_time_main"],
+                        " Time for dependencies: ",
+                        st.session_state["last_time_dep"],
+                    )
+                    display_index = st.slider(
+                        "Display index: ",
+                        min_value=1,
+                        max_value=st.session_state["last_num_runs"],
+                        value=1,
+                        key=f"display_index_{company}_{selected_step}",
+                    )
+                    st.write(
+                        st.session_state["last_results"][display_index - 1]
+                    )
 
             if st.button("Save prompt", key=f"save_prompt_{company}_{selected_step}"):
                 # update_prompt(company, selected_step, edited_prompt)
