@@ -2,6 +2,9 @@ import streamlit as st
 from dotenv import load_dotenv
 import os
 from pymongo import MongoClient, DESCENDING
+from pyvis.network import Network
+import streamlit.components.v1 as components
+import json
 
 from runCustomPrompt import run_custom_prompt
 
@@ -179,16 +182,6 @@ def settings_dialog(ticker: str, step: str):
             entry_index = i
             break
 
-    if entry_index is None:
-        st.session_state.connections_store.append(
-            {
-                "company": ticker,
-                "step": step,
-                "connections": [],
-            }
-        )
-        entry_index = len(st.session_state.connections_store) - 1
-
     connections = st.session_state.connections_store[entry_index]["connections"]
 
     st.write("Current connections:", connections or "None")
@@ -240,8 +233,8 @@ st.set_page_config(page_title="Prompt editing tool!", layout="wide")
 
 st.title("Prompt editing tool!")
 
-tab1, tab2 = st.tabs(
-    ["View Current Prompt/ Outputs", "Edit prompts and generate new outputs"]
+tab1, tab2, tab3 = st.tabs(
+    ["View Current Prompt/ Outputs", "Edit prompts and generate new outputs", "Visualize Connections"]
 )
 
 # ---------------- TAB 1 ----------------
@@ -257,8 +250,15 @@ with tab1:
             ["GEV", "PLTR", "COST", "CVNA", "CMG", "AER", "VST", "ALAB", "TMDX", "OXY", "AMD"],
             key="company_view",
         )
+        company_entries = [
+            entry for entry in st.session_state.connections_store
+            if entry["company"] == company
+        ]
 
-        steps = get_steps(company)
+        if not company_entries:
+            steps = get_steps(company)
+        else:
+            steps = [entry["step"] for entry in company_entries]
 
         if not steps:
             st.warning("No steps found for this company.")
@@ -301,7 +301,15 @@ with tab2:
             st.session_state["edit_selected_company"] = company
             st.session_state["edit_selected_step"] = None
 
-        steps = get_steps(company)
+        company_entries = [
+            entry for entry in st.session_state.connections_store
+            if entry["company"] == company
+        ]
+
+        if not company_entries:
+            steps = get_steps(company)
+        else:
+            steps = [entry["step"] for entry in company_entries]
 
         if not steps:
             st.warning("No steps found for this company.")
@@ -412,3 +420,60 @@ with tab2:
     else:
         with prompt_middle:
             st.info("Select a step on the left to edit its prompt.")
+
+
+## visualize connections
+with tab3:
+    st.subheader("Connections graph")
+
+    graph_company = st.selectbox("Company to visualize", ["GEV", "PLTR", "COST", "CVNA", "CMG", "AER", "VST", "ALAB", "TMDX", "OXY", "AMD"],)
+    if st.button("### Draw/ reDraw"):
+        nodes = set()
+        edges = set()
+
+        for item in st.session_state.connections_store:
+            step = item["step"]
+            nodes.add(step)
+            for connection in item.get("connections", []) or []:
+                nodes.add(connection)
+                edges.add((connection, step))  # connection -> step
+
+        # ----- build PyVis network -----
+        net = Network(
+            height="600px",
+            width="100%",
+            directed=True,
+            notebook=False,
+            cdn_resources="in_line",
+        )
+
+        for n in nodes:
+            net.add_node(n, label=n)   # you can also pass group=... if you want colors
+
+        for src, dst in edges:
+            net.add_edge(src, dst)
+
+        # ----- make it left-to-right hierarchical -----
+        net.set_options(json.dumps({
+        "layout": {
+            "hierarchical": {
+                "enabled": True,
+                "direction": "LR",       # left-to-right
+                "sortMethod": "hubsize",
+                "nodeSpacing": 150,
+                "levelSeparation": 150
+            }
+        },
+        "physics": {
+            "enabled": False           # keep layout fixed
+        },
+        "edges": {
+            "smooth": True,
+            "arrows": {
+                "to": {"enabled": True}
+            }
+        }
+    }))
+
+        html_str = net.generate_html("graph.html", notebook=False)
+        components.html(html_str, height=600, width="100%", scrolling=True)
